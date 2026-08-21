@@ -120,6 +120,19 @@ export const workflowRuns = mysqlTable(
   ],
 );
 
+export const workflowRunAnnotations = mysqlTable(
+  "workflowRunAnnotations",
+  {
+    id: varchar("id", { length: 40 }).primaryKey(),
+    tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    workflowRunId: varchar("workflowRunId", { length: 40 }).notNull().references(() => workflowRuns.id, { onDelete: "cascade" }),
+    createdBy: int("createdBy").notNull().references(() => users.id),
+    body: text("body").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("run_annotations_tenant_run_idx").on(table.tenantId, table.workflowRunId, table.createdAt)],
+);
+
 export const executions = mysqlTable(
   "executions",
   {
@@ -246,6 +259,22 @@ export const alertIncidents = mysqlTable(
   ],
 );
 
+export const tenantAuditEvents = mysqlTable(
+  "tenantAuditEvents",
+  {
+    id: varchar("id", { length: 40 }).primaryKey(),
+    tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    actorId: int("actorId").references(() => users.id, { onDelete: "set null" }),
+    action: varchar("action", { length: 100 }).notNull(),
+    subjectType: varchar("subjectType", { length: 60 }).notNull(),
+    subjectId: varchar("subjectId", { length: 80 }),
+    summary: text("summary").notNull(),
+    metadata: json("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("audit_tenant_created_idx").on(table.tenantId, table.createdAt)],
+);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Tenant = typeof tenants.$inferSelect;
@@ -260,3 +289,5 @@ export type ModelSelection = typeof modelSelections.$inferSelect;
 export type ExecutionTrace = typeof executionTraces.$inferSelect;
 export type AlertSettings = typeof alertSettings.$inferSelect;
 export type AlertIncident = typeof alertIncidents.$inferSelect;
+export type WorkflowRunAnnotation = typeof workflowRunAnnotations.$inferSelect;
+export type TenantAuditEvent = typeof tenantAuditEvents.$inferSelect;

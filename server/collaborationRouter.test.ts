@@ -8,9 +8,16 @@ const collaboration = vi.hoisted(() => ({
   removeCollaborator: vi.fn(),
   updateCollaboratorRole: vi.fn(),
 }));
+const governance = vi.hoisted(() => ({
+  addWorkflowRunAnnotation: vi.fn(),
+  listTenantAuditEvents: vi.fn(),
+  listWorkflowRunAnnotations: vi.fn(),
+  writeTenantAuditEvent: vi.fn(),
+}));
 
 vi.mock("./orchestrationDb", async importOriginal => ({ ...(await importOriginal<typeof import("./orchestrationDb")>()), ...orchestrationDb }));
 vi.mock("./collaborationService", () => collaboration);
+vi.mock("./governanceService", () => governance);
 
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";

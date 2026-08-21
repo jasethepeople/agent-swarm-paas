@@ -43,3 +43,10 @@
 - [x] Add unit coverage for tenant-scoped run detail and workflow duplication.
 - [x] Re-run type checks, tests, and responsive visual verification for the operations iteration.
 - [x] Document visual QA for workflow duplication, run-detail drill-down, incident filtering, responsiveness, and zero-radius/zero-shadow compliance.
+- [x] Add tenant-isolated audit records for workflow, collaborator, incident, and agent governance actions.
+- [x] Add workflow-run annotations that let tenant users attach operational context to completed or failed runs.
+- [x] Add tenant-scoped audit and run-annotation API procedures with role-aware write controls.
+- [x] Add an audit ledger and run-note controls to the Neo-Constructivist workspace.
+- [x] Add tests for audit isolation, run annotation ownership, and admin governance controls.
+- [x] Re-run type checks, tests, and responsive visual verification for the governance iteration.
+- [x] Review governance visuals: the admin-only ledger retains a full-width grid position on desktop, stacks cleanly beneath threshold controls on mobile, and preserves zero-radius/zero-shadow styling.

@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { Copy, Eye, History, Loader2, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import RunAnnotationPanel from "./RunAnnotationPanel";
 
 type Props = {
   tenantId: string;
@@ -53,7 +54,7 @@ export default function WorkflowOperationsPanel({ tenantId, activeWorkflowId, is
       </section>
       {selectedRunId ? <section className="run-detail panel">
         <div className="panel-heading"><span><Eye size={16} /> RUN DETAIL / {selectedRunId}</span><button onClick={() => setSelectedRunId("")}>CLOSE <X size={13} /></button></div>
-        {detailQuery.isLoading ? <div className="empty-grid-note">Loading tenant-isolated node executions and handoff traces.</div> : detailQuery.data ? <><div className="run-detail__nodes">{detailQuery.data.nodeExecutions.map(execution => <div className="run-detail__node" key={execution.id}><span>{execution.selectedModel || "ROUTING"}</span><strong>{execution.status.toUpperCase()}</strong><small>{numberFormat.format(execution.totalTokens)} TOKENS / {currencyFormat.format(execution.estimatedCostMicros / 1_000_000)}</small><p>{execution.output || execution.error || "No output retained."}</p></div>)}</div><div className="run-detail__handoffs">{detailQuery.data.handoffs.map(trace => <div key={trace.id}><time>{time(trace.createdAt)}</time><span>{trace.eventType}</span><p>{trace.message}</p></div>)}</div></> : <div className="empty-grid-note">Run detail is unavailable in the active tenant.</div>}
+        {detailQuery.isLoading ? <div className="empty-grid-note">Loading tenant-isolated node executions and handoff traces.</div> : detailQuery.data ? <><div className="run-detail__nodes">{detailQuery.data.nodeExecutions.map(execution => <div className="run-detail__node" key={execution.id}><span>{execution.selectedModel || "ROUTING"}</span><strong>{execution.status.toUpperCase()}</strong><small>{numberFormat.format(execution.totalTokens)} TOKENS / {currencyFormat.format(execution.estimatedCostMicros / 1_000_000)}</small><p>{execution.output || execution.error || "No output retained."}</p></div>)}</div><div className="run-detail__handoffs">{detailQuery.data.handoffs.map(trace => <div key={trace.id}><time>{time(trace.createdAt)}</time><span>{trace.eventType}</span><p>{trace.message}</p></div>)}</div><RunAnnotationPanel tenantId={tenantId} workflowRunId={detailQuery.data.run.id} status={detailQuery.data.run.status} /></> : <div className="empty-grid-note">Run detail is unavailable in the active tenant.</div>}
       </section> : null}
     </section>
   );

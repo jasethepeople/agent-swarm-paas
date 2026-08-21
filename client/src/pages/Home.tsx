@@ -2,6 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "@/const";
 import WorkflowCanvas from "@/components/WorkflowCanvas";
 import IncidentHistoryPanel from "@/components/IncidentHistoryPanel";
+import AuditLedger from "@/components/AuditLedger";
 import WorkflowOperationsPanel from "@/components/WorkflowOperationsPanel";
 import { trpc } from "@/lib/trpc";
 import "@/styles/replay.css";
@@ -365,6 +366,7 @@ export default function Home() {
               </div> : null}
             </section>
             <IncidentHistoryPanel tenantId={tenantId} />
+            <AuditLedger tenantId={tenantId} isTenantAdmin={isTenantAdmin} />
 
             <section className="panel execution-console">
               <div className="panel-heading"><span><Zap size={16} /> EXECUTION CONSOLE</span><span className="panel-index">LIVE / REAL INFERENCE</span></div>

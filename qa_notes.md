@@ -20,3 +20,13 @@ The review confirms the final iteration preserves the zero-radius and zero-shado
 | Responsive behavior | Desktop keeps two-column operational hierarchy; mobile stacks archive actions, node details, and handoff records without clipping. |
 
 The operations iteration maintains the same black-grid, zero-radius, zero-shadow treatment at desktop and mobile breakpoints.
+
+## Governance Iteration
+
+| Area | Outcome |
+|---|---|
+| Tenant audit ledger | The admin-only ledger is legible below the alert matrix, preserves alignment with the observability grid, and provides an explicit empty state. |
+| Workflow annotations | The completed-run note control fits within the drill-down panel and uses the same compact square action pattern. |
+| Mobile behavior | The ledger stacks directly beneath the threshold controls without horizontal clipping; metadata remains readable in the monospace presentation. |
+
+The governance controls preserve the black architectural grid, red operational emphasis, zero-radius edges, and no drop-shadow treatment at both validated breakpoints.

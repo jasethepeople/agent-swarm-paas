@@ -21,6 +21,7 @@ import { runRoutedInference } from "./llmRouter";
 import { protectedProcedure, router, tenantAdminProcedure, tenantProcedure } from "./_core/trpc";
 import { acknowledgeAlertIncident, getTenantAlertOverview, updateAlertSettings } from "./alertService";
 import { acceptPendingInvitationsForUser, deliverInvitationForTenant, inviteCollaborator, listCollaboratorsForTenant, removeCollaborator, updateCollaboratorRole } from "./collaborationService";
+import { addWorkflowRunAnnotation, listTenantAuditEvents, listWorkflowRunAnnotations, writeTenantAuditEvent } from "./governanceService";
 import { getWorkflowRunDetail, listWorkflowRunsForTenant, replayWorkflowRun, runSequentialWorkflow } from "./workflowRunService";
 
 const graphNode = z.object({
@@ -67,7 +68,12 @@ export const orchestrationRouter = router({
         modelPreference: z.string().min(1).max(120).default("auto"),
         configuration: z.record(z.string(), z.unknown()).optional(),
       }))
-      .mutation(({ ctx, input }) => createAgentForTenant({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id })),
+      .mutation(async ({ ctx, input }) => {
+        const agent = await createAgentForTenant({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id });
+        if (!agent) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Agent registration could not complete." });
+        await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "agent.created", subjectType: "agent", subjectId: agent.id, summary: `Registered agent ${agent.name}.` });
+        return agent;
+      }),
     update: tenantAdminProcedure
       .input(z.object({
         agentId: z.string().min(1).max(40),
@@ -81,6 +87,7 @@ export const orchestrationRouter = router({
       .mutation(async ({ ctx, input }) => {
         const agent = await updateAgentForTenant({ ...input, tenantId: ctx.tenant.id });
         if (!agent) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found in this tenant." });
+        await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "agent.updated", subjectType: "agent", subjectId: agent.id, summary: `Updated agent ${agent.name}.` });
         return agent;
       }),
     delete: tenantAdminProcedure
@@ -89,6 +96,7 @@ export const orchestrationRouter = router({
         try {
           const count = await deleteAgentForTenant(ctx.tenant.id, input.agentId);
           if (count === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found in this tenant." });
+          await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "agent.deleted", subjectType: "agent", subjectId: input.agentId, summary: "Deleted an agent from the tenant registry." });
           return { success: true };
         } catch (error) {
           if (error instanceof TRPCError) throw error;
@@ -142,6 +150,7 @@ export const orchestrationRouter = router({
       .mutation(async ({ ctx, input }) => {
         const workflow = await duplicateWorkflowForTenant({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id });
         if (!workflow) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow not found in the active tenant." });
+        await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "workflow.duplicated", subjectType: "workflow", subjectId: workflow.id, summary: `Duplicated workflow ${workflow.name}.` });
         return workflow;
       }),
     delete: tenantAdminProcedure
@@ -153,13 +162,33 @@ export const orchestrationRouter = router({
       }),
   }),
 
+  governance: router({
+    audit: tenantAdminProcedure.query(({ ctx }) => listTenantAuditEvents(ctx.tenant.id)),
+    annotations: router({
+      list: tenantProcedure
+        .input(z.object({ workflowRunId: z.string().min(1).max(40) }))
+        .query(({ ctx, input }) => listWorkflowRunAnnotations(ctx.tenant.id, input.workflowRunId)),
+      add: tenantProcedure
+        .input(z.object({ workflowRunId: z.string().min(1).max(40), body: z.string().min(2).max(4_000) }))
+        .mutation(async ({ ctx, input }) => {
+          try {
+            return await addWorkflowRunAnnotation({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id });
+          } catch (error) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Annotation could not be added." });
+          }
+        }),
+    }),
+  }),
+
   collaboration: router({
     list: tenantAdminProcedure.query(({ ctx }) => listCollaboratorsForTenant(ctx.tenant.id)),
     invite: tenantAdminProcedure
       .input(z.object({ email: z.string().email().max(320), role: z.enum(["admin", "user"]).default("user") }))
       .mutation(async ({ ctx, input }) => {
         try {
-          return await inviteCollaborator({ ...input, tenantId: ctx.tenant.id, invitedBy: ctx.user!.id });
+          const invitation = await inviteCollaborator({ ...input, tenantId: ctx.tenant.id, invitedBy: ctx.user!.id });
+          await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "collaborator.invited", subjectType: "invitation", subjectId: invitation.id, summary: `Invited ${invitation.email} as ${invitation.role}.` });
+          return invitation;
         } catch (error) {
           throw new TRPCError({ code: "CONFLICT", message: error instanceof Error ? error.message : "Invitation could not be created." });
         }
@@ -178,6 +207,7 @@ export const orchestrationRouter = router({
       .mutation(async ({ ctx, input }) => {
         try {
           await updateCollaboratorRole({ ...input, tenantId: ctx.tenant.id });
+          await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "collaborator.role_changed", subjectType: "membership", subjectId: String(input.userId), summary: `Changed collaborator ${input.userId} role to ${input.role}.` });
           return { success: true };
         } catch (error) {
           throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Role could not be changed." });
@@ -190,6 +220,7 @@ export const orchestrationRouter = router({
         try {
           const removed = await removeCollaborator({ tenantId: ctx.tenant.id, userId: input.userId });
           if (!removed) throw new Error("Collaborator not found in the active tenant.");
+          await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "collaborator.removed", subjectType: "membership", subjectId: String(input.userId), summary: `Removed collaborator ${input.userId}.` });
           return { success: true };
         } catch (error) {
           throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Collaborator could not be removed." });
@@ -241,6 +272,7 @@ export const orchestrationRouter = router({
           acknowledgedBy: ctx.user!.id,
         });
         if (!acknowledged) throw new TRPCError({ code: "NOT_FOUND", message: "Open incident not found in the active tenant." });
+        await writeTenantAuditEvent({ tenantId: ctx.tenant.id, actorId: ctx.user!.id, action: "incident.acknowledged", subjectType: "incident", subjectId: input.incidentId, summary: "Acknowledged an operational incident." });
         return { success: true };
       }),
   }),

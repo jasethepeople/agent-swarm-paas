@@ -3,10 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const orchestrationDb = vi.hoisted(() => ({ consumeTenantQuota: vi.fn(), duplicateWorkflowForTenant: vi.fn(), getTenantScope: vi.fn() }));
 const workflows = vi.hoisted(() => ({ getWorkflowRunDetail: vi.fn(), listWorkflowRunsForTenant: vi.fn(), replayWorkflowRun: vi.fn(), runSequentialWorkflow: vi.fn() }));
 const alerts = vi.hoisted(() => ({ acknowledgeAlertIncident: vi.fn(), getTenantAlertOverview: vi.fn(), updateAlertSettings: vi.fn() }));
+const governance = vi.hoisted(() => ({
+  addWorkflowRunAnnotation: vi.fn(),
+  listTenantAuditEvents: vi.fn(),
+  listWorkflowRunAnnotations: vi.fn(),
+  writeTenantAuditEvent: vi.fn(),
+}));
 
 vi.mock("./orchestrationDb", async importOriginal => ({ ...(await importOriginal<typeof import("./orchestrationDb")>()), ...orchestrationDb }));
 vi.mock("./workflowRunService", () => workflows);
 vi.mock("./alertService", () => alerts);
+vi.mock("./governanceService", () => governance);
 
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
