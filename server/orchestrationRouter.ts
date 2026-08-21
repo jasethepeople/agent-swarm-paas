@@ -1,0 +1,184 @@
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
+import {
+  appendExecutionTrace,
+  completeExecution,
+  createAgentForTenant,
+  createExecution,
+  createTenantForUser,
+  deleteAgentForTenant,
+  deleteWorkflowForTenant,
+  ensureDefaultTenantForUser,
+  getAgentForTenant,
+  getObservabilitySnapshot,
+  listAgentsForTenant,
+  listTenantsForUser,
+  listWorkflowsForTenant,
+  saveWorkflowForTenant,
+  updateAgentForTenant,
+} from "./orchestrationDb";
+import { runRoutedInference } from "./llmRouter";
+import { protectedProcedure, router, tenantAdminProcedure, tenantProcedure } from "./_core/trpc";
+
+const graphNode = z.object({
+  id: z.string().min(1).max(80),
+  type: z.string().min(1).max(80).optional(),
+  position: z.object({ x: z.number(), y: z.number() }),
+  data: z.object({ agentId: z.string().min(1).max(40).optional(), label: z.string().max(120).optional() }).passthrough(),
+});
+
+const graphSchema = z.object({
+  nodes: z.array(graphNode).max(100),
+  edges: z.array(z.object({ id: z.string().min(1).max(80), source: z.string().min(1).max(80), target: z.string().min(1).max(80) })).max(200),
+});
+
+const slugify = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+export const orchestrationRouter = router({
+  workspace: router({
+    listTenants: protectedProcedure.query(async ({ ctx }) => ensureDefaultTenantForUser(ctx.user)),
+    createTenant: protectedProcedure
+      .input(z.object({ name: z.string().min(2).max(120) }))
+      .mutation(async ({ ctx, input }) => {
+        const slug = `${slugify(input.name) || "command"}-${Math.random().toString(36).slice(2, 6)}`;
+        return createTenantForUser({ userId: ctx.user.id, name: input.name, slug });
+      }),
+  }),
+
+  agents: router({
+    list: tenantProcedure.query(({ ctx }) => listAgentsForTenant(ctx.tenant.id)),
+    create: tenantAdminProcedure
+      .input(z.object({
+        name: z.string().min(2).max(120),
+        description: z.string().max(1000).optional(),
+        systemPrompt: z.string().min(10).max(8000),
+        modelPreference: z.string().min(1).max(120).default("auto"),
+        configuration: z.record(z.string(), z.unknown()).optional(),
+      }))
+      .mutation(({ ctx, input }) =>
+        createAgentForTenant({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id }),
+      ),
+    update: tenantAdminProcedure
+      .input(z.object({
+        agentId: z.string().min(1).max(40),
+        name: z.string().min(2).max(120).optional(),
+        description: z.string().max(1000).nullable().optional(),
+        systemPrompt: z.string().min(10).max(8000).optional(),
+        modelPreference: z.string().min(1).max(120).optional(),
+        status: z.enum(["enabled", "disabled"]).optional(),
+        configuration: z.record(z.string(), z.unknown()).optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const agent = await updateAgentForTenant({ ...input, tenantId: ctx.tenant.id });
+        if (!agent) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found in this tenant." });
+        return agent;
+      }),
+    delete: tenantAdminProcedure
+      .input(z.object({ agentId: z.string().min(1).max(40) }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const count = await deleteAgentForTenant(ctx.tenant.id, input.agentId);
+          if (count === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found in this tenant." });
+          return { success: true };
+        } catch (error) {
+          if (error instanceof TRPCError) throw error;
+          throw new TRPCError({ code: "CONFLICT", message: "An agent with retained execution history can be disabled but not deleted." });
+        }
+      }),
+  }),
+
+  workflows: router({
+    list: tenantProcedure.query(({ ctx }) => listWorkflowsForTenant(ctx.tenant.id)),
+    save: tenantAdminProcedure
+      .input(z.object({ workflowId: z.string().min(1).max(40).optional(), name: z.string().min(2).max(120), graph: graphSchema }))
+      .mutation(async ({ ctx, input }) => {
+        const agentIds = new Set((await listAgentsForTenant(ctx.tenant.id)).map(agent => agent.id));
+        const invalidNode = input.graph.nodes.find(node => node.data.agentId && !agentIds.has(node.data.agentId));
+        if (invalidNode) throw new TRPCError({ code: "BAD_REQUEST", message: "Workflow nodes may only reference agents in the active tenant." });
+        return saveWorkflowForTenant({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id });
+      }),
+    delete: tenantAdminProcedure
+      .input(z.object({ workflowId: z.string().min(1).max(40) }))
+      .mutation(async ({ ctx, input }) => {
+        const count = await deleteWorkflowForTenant(ctx.tenant.id, input.workflowId);
+        if (count === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow not found in this tenant." });
+        return { success: true };
+      }),
+  }),
+
+  executions: router({
+    runAgent: tenantProcedure
+      .input(z.object({ agentId: z.string().min(1).max(40), prompt: z.string().min(1).max(30_000), workflowId: z.string().min(1).max(40).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const agent = await getAgentForTenant(ctx.tenant.id, input.agentId);
+        if (!agent) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found in this tenant." });
+        if (agent.status !== "enabled") throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Enable the agent before running it." });
+
+        const executionId = await createExecution({
+          tenantId: ctx.tenant.id,
+          agentId: agent.id,
+          requestedBy: ctx.user!.id,
+          workflowId: input.workflowId,
+        });
+        await appendExecutionTrace({
+          tenantId: ctx.tenant.id,
+          executionId,
+          agentId: agent.id,
+          eventType: "execution.started",
+          message: "Agent execution entered the routing gateway.",
+        });
+
+        try {
+          const result = await runRoutedInference({
+            tenantId: ctx.tenant.id,
+            executionId,
+            prompt: input.prompt,
+            systemPrompt: agent.systemPrompt,
+            preference: agent.modelPreference,
+          });
+          await completeExecution({
+            tenantId: ctx.tenant.id,
+            executionId,
+            status: "completed",
+            selectedModel: result.route.modelId,
+            promptTokens: result.promptTokens,
+            completionTokens: result.completionTokens,
+            totalTokens: result.totalTokens,
+            estimatedCostMicros: result.estimatedCostMicros,
+            output: result.output,
+          });
+          await appendExecutionTrace({
+            tenantId: ctx.tenant.id,
+            executionId,
+            agentId: agent.id,
+            eventType: "inference.completed",
+            message: `${result.route.provider} completed inference via ${result.route.modelId}.`,
+            metadata: { latencyMs: result.observedLatencyMs, tokens: result.totalTokens },
+          });
+          return { executionId, output: result.output, route: result.route, latencyMs: result.observedLatencyMs };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Inference failed unexpectedly.";
+          await completeExecution({ tenantId: ctx.tenant.id, executionId, status: "failed", error: message });
+          await appendExecutionTrace({
+            tenantId: ctx.tenant.id,
+            executionId,
+            agentId: agent.id,
+            level: "error",
+            eventType: "inference.failed",
+            message,
+          });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "The routed LLM inference could not complete." });
+        }
+      }),
+  }),
+
+  observability: router({
+    snapshot: tenantProcedure.query(({ ctx }) => getObservabilitySnapshot(ctx.tenant.id)),
+  }),
+});

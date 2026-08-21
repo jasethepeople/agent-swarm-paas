@@ -1,0 +1,18 @@
+# Project TODO
+
+- [x] Define tenant, membership, agent, workflow, execution, model-selection, and trace tables in the Drizzle schema.
+- [x] Add database-level tenant and relationship constraints for core orchestration records.
+- [x] Apply the tenant-aware database migration and verify the created tables.
+- [x] Add tenant-scoped database access helpers that enforce tenant IDs for every agent, workflow, execution, and trace query.
+- [x] Add protected tRPC API contracts for tenant discovery, agent lifecycle, workflow persistence, observability, and agent execution.
+- [x] Add per-tenant gateway rate limiting that applies before protected application procedures execute.
+- [x] Implement server-side dynamic model catalog discovery, cost-latency scoring, real built-in LLM inference, and persisted selection metrics.
+- [x] Validate the configured LLM proxy with a live completion and align GPT token handling with the verified API contract.
+- [x] Persist timestamped per-agent execution traces and token usage records after each inference attempt.
+- [x] Install and integrate React Flow for drag-and-drop agent nodes, directed graph edges, and tenant-scoped graph save/load.
+- [x] Build a brutalist Neo-Constructivist design system with black ground, #E30613 accents, grid lines, zero radius, and zero shadows.
+- [x] Build the workspace shell, tenant selector, agent management console, workflow builder, and observability dashboard.
+- [x] Render model selection history, token totals, and structured execution timelines with automatic client refresh.
+- [x] Add Vitest coverage for tenant isolation, rate limiting, and model scoring.
+- [x] Add Vitest coverage for workflow graph validation.
+- [x] Run type checking, tests, and visual verification at desktop and mobile breakpoints.
