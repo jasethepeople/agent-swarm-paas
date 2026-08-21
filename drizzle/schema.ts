@@ -56,6 +56,10 @@ export const tenantInvitations = mysqlTable(
     role: mysqlEnum("role", ["admin", "user"]).default("user").notNull(),
     status: mysqlEnum("status", ["pending", "accepted", "revoked"]).default("pending").notNull(),
     invitedBy: int("invitedBy").notNull().references(() => users.id),
+    deliveryStatus: mysqlEnum("deliveryStatus", ["not_sent", "sent", "failed"]).default("not_sent").notNull(),
+    providerMessageId: varchar("providerMessageId", { length: 120 }),
+    sentAt: timestamp("sentAt"),
+    deliveryError: text("deliveryError"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     acceptedAt: timestamp("acceptedAt"),
   },
@@ -100,6 +104,7 @@ export const workflowRuns = mysqlTable(
     id: varchar("id", { length: 40 }).primaryKey(),
     tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
     workflowId: varchar("workflowId", { length: 40 }).notNull().references(() => workflows.id),
+    replayOfRunId: varchar("replayOfRunId", { length: 40 }),
     requestedBy: int("requestedBy").notNull().references(() => users.id),
     status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
     initialInput: text("initialInput").notNull(),
@@ -109,7 +114,10 @@ export const workflowRuns = mysqlTable(
     startedAt: timestamp("startedAt").defaultNow().notNull(),
     completedAt: timestamp("completedAt"),
   },
-  table => [index("workflow_runs_tenant_started_idx").on(table.tenantId, table.startedAt)],
+  table => [
+    index("workflow_runs_tenant_started_idx").on(table.tenantId, table.startedAt),
+    index("workflow_runs_replay_idx").on(table.replayOfRunId),
+  ],
 );
 
 export const executions = mysqlTable(
@@ -215,6 +223,29 @@ export const alertSettings = mysqlTable("alertSettings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const alertIncidents = mysqlTable(
+  "alertIncidents",
+  {
+    id: varchar("id", { length: 40 }).primaryKey(),
+    tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    fingerprint: varchar("fingerprint", { length: 180 }).notNull(),
+    alertType: mysqlEnum("alertType", ["cost", "latency", "failure"]).notNull(),
+    executionId: varchar("executionId", { length: 40 }).references(() => executions.id, { onDelete: "set null" }),
+    message: text("message").notNull(),
+    observedValue: int("observedValue").notNull(),
+    thresholdValue: int("thresholdValue").notNull(),
+    status: mysqlEnum("status", ["open", "acknowledged"]).default("open").notNull(),
+    acknowledgedBy: int("acknowledgedBy").references(() => users.id, { onDelete: "set null" }),
+    acknowledgedAt: timestamp("acknowledgedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    uniqueIndex("incident_tenant_fingerprint_unique").on(table.tenantId, table.fingerprint),
+    index("incident_tenant_status_idx").on(table.tenantId, table.status, table.createdAt),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Tenant = typeof tenants.$inferSelect;
@@ -228,3 +259,4 @@ export type Execution = typeof executions.$inferSelect;
 export type ModelSelection = typeof modelSelections.$inferSelect;
 export type ExecutionTrace = typeof executionTraces.$inferSelect;
 export type AlertSettings = typeof alertSettings.$inferSelect;
+export type AlertIncident = typeof alertIncidents.$inferSelect;

@@ -18,9 +18,9 @@ import {
 } from "./orchestrationDb";
 import { runRoutedInference } from "./llmRouter";
 import { protectedProcedure, router, tenantAdminProcedure, tenantProcedure } from "./_core/trpc";
-import { getTenantAlertOverview, updateAlertSettings } from "./alertService";
-import { acceptPendingInvitationsForUser, inviteCollaborator, listCollaboratorsForTenant, removeCollaborator, updateCollaboratorRole } from "./collaborationService";
-import { runSequentialWorkflow } from "./workflowRunService";
+import { acknowledgeAlertIncident, getTenantAlertOverview, updateAlertSettings } from "./alertService";
+import { acceptPendingInvitationsForUser, deliverInvitationForTenant, inviteCollaborator, listCollaboratorsForTenant, removeCollaborator, updateCollaboratorRole } from "./collaborationService";
+import { listWorkflowRunsForTenant, replayWorkflowRun, runSequentialWorkflow } from "./workflowRunService";
 
 const graphNode = z.object({
   id: z.string().min(1).max(80),
@@ -115,6 +115,20 @@ export const orchestrationRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Sequential workflow execution could not start." });
         }
       }),
+    runs: tenantProcedure.query(({ ctx }) => listWorkflowRunsForTenant(ctx.tenant.id)),
+    replay: tenantProcedure
+      .input(z.object({ sourceWorkflowRunId: z.string().min(1).max(40) }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await replayWorkflowRun({
+            tenantId: ctx.tenant.id,
+            sourceWorkflowRunId: input.sourceWorkflowRunId,
+            requestedBy: ctx.user!.id,
+          });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Workflow replay could not start." });
+        }
+      }),
     delete: tenantAdminProcedure
       .input(z.object({ workflowId: z.string().min(1).max(40) }))
       .mutation(async ({ ctx, input }) => {
@@ -133,6 +147,15 @@ export const orchestrationRouter = router({
           return await inviteCollaborator({ ...input, tenantId: ctx.tenant.id, invitedBy: ctx.user!.id });
         } catch (error) {
           throw new TRPCError({ code: "CONFLICT", message: error instanceof Error ? error.message : "Invitation could not be created." });
+        }
+      }),
+    redeliverInvitation: tenantAdminProcedure
+      .input(z.object({ invitationId: z.string().min(1).max(40) }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          return await deliverInvitationForTenant({ tenantId: ctx.tenant.id, invitationId: input.invitationId });
+        } catch (error) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invitation could not be delivered." });
         }
       }),
     changeRole: tenantAdminProcedure
@@ -194,5 +217,16 @@ export const orchestrationRouter = router({
         enabled: z.boolean(),
       }))
       .mutation(({ ctx, input }) => updateAlertSettings({ ...input, tenantId: ctx.tenant.id })),
+    acknowledgeIncident: tenantProcedure
+      .input(z.object({ incidentId: z.string().min(1).max(40) }))
+      .mutation(async ({ ctx, input }) => {
+        const acknowledged = await acknowledgeAlertIncident({
+          tenantId: ctx.tenant.id,
+          incidentId: input.incidentId,
+          acknowledgedBy: ctx.user!.id,
+        });
+        if (!acknowledged) throw new TRPCError({ code: "NOT_FOUND", message: "Open incident not found in the active tenant." });
+        return { success: true };
+      }),
   }),
 });

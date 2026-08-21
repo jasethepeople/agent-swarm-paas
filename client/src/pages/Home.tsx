@@ -2,6 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "@/const";
 import WorkflowCanvas from "@/components/WorkflowCanvas";
 import { trpc } from "@/lib/trpc";
+import "@/styles/replay.css";
 import { toast } from "sonner";
 import {
   Activity,
@@ -15,6 +16,7 @@ import {
   Cpu,
   Database,
   Gauge,
+  History,
   Layers3,
   Loader2,
   LogOut,
@@ -22,6 +24,7 @@ import {
   Plus,
   Play,
   Radio,
+  RotateCcw,
   Save,
   Send,
   Terminal,
@@ -94,6 +97,7 @@ export default function Home() {
   const queryEnabled = Boolean(user && tenantId);
   const agentsQuery = trpc.orchestration.agents.list.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 10_000 });
   const workflowsQuery = trpc.orchestration.workflows.list.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 10_000 });
+  const workflowRunsQuery = trpc.orchestration.workflows.runs.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 5_000 });
   const observabilityQuery = trpc.orchestration.observability.snapshot.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 5_000 });
   const alertsQuery = trpc.orchestration.observability.alerts.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 5_000 });
   const collaboratorsQuery = trpc.orchestration.collaboration.list.useQuery(gatewayInput, { enabled: queryEnabled && activeTenant?.membershipRole === "admin", refetchInterval: 10_000 });
@@ -172,8 +176,22 @@ export default function Home() {
       await Promise.all([
         utils.orchestration.observability.snapshot.invalidate(gatewayInput),
         utils.orchestration.observability.alerts.invalidate(gatewayInput),
+        utils.orchestration.workflows.runs.invalidate(gatewayInput),
       ]);
       toast.success(`Sequential workflow run completed with ${numberFormat.format(result.totalTokens)} tokens.`);
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const replayWorkflow = trpc.orchestration.workflows.replay.useMutation({
+    onSuccess: async result => {
+      setLatestOutput(result.output);
+      await Promise.all([
+        utils.orchestration.workflows.runs.invalidate(gatewayInput),
+        utils.orchestration.observability.snapshot.invalidate(gatewayInput),
+        utils.orchestration.observability.alerts.invalidate(gatewayInput),
+      ]);
+      toast.success(`Workflow replay completed with ${numberFormat.format(result.totalTokens)} tokens.`);
     },
     onError: error => toast.error(error.message),
   });
@@ -182,7 +200,15 @@ export default function Home() {
     onSuccess: async invitation => {
       setInviteEmail("");
       await utils.orchestration.collaboration.list.invalidate(gatewayInput);
-      toast.success(`Invitation staged for ${invitation.email}. It activates when that user signs in.`);
+      toast.success(invitation.deliveryStatus === "sent" ? `Invitation email sent to ${invitation.email}.` : `Invitation staged for ${invitation.email}. It activates when that user signs in.`);
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const redeliverInvitation = trpc.orchestration.collaboration.redeliverInvitation.useMutation({
+    onSuccess: async invitation => {
+      await utils.orchestration.collaboration.list.invalidate(gatewayInput);
+      toast.success(invitation.deliveryStatus === "sent" ? `Invitation email sent to ${invitation.email}.` : invitation.deliveryError || "Invitation delivery remains pending sender configuration.");
     },
     onError: error => toast.error(error.message),
   });
@@ -204,6 +230,14 @@ export default function Home() {
     onSuccess: () => {
       utils.orchestration.observability.alerts.invalidate(gatewayInput);
       toast.success("Tenant alert thresholds updated.");
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const acknowledgeIncident = trpc.orchestration.observability.acknowledgeIncident.useMutation({
+    onSuccess: () => {
+      utils.orchestration.observability.alerts.invalidate(gatewayInput);
+      toast.success("Incident acknowledged for this tenant.");
     },
     onError: error => toast.error(error.message),
   });
@@ -313,6 +347,14 @@ export default function Home() {
               <div className="alert-deck__signals">
                 {alertOverview?.alerts.length ? alertOverview.alerts.map((alert, index) => <div className="alert-signal" key={`${alert.type}-${alert.executionId}-${index}`}><span>{alert.type.toUpperCase()}</span><p>{alert.message}</p><strong>{alert.type === "cost" ? currencyFormat.format(alert.value / 1_000_000) : alert.type === "latency" ? `${alert.value} MS` : `${alert.value} FAILURES`}</strong></div>) : <div className="alert-deck__clear">THRESHOLDS ARMED. NO COST, LATENCY, OR FAILURE BREACHES DETECTED.</div>}
               </div>
+              {alertOverview?.incidents.length ? <div className="incident-history">
+                <div className="incident-history__label"><History size={14} /> INCIDENT HISTORY</div>
+                {alertOverview.incidents.slice(0, 5).map(incident => <div className={incident.status === "open" ? "incident-row incident-row--open" : "incident-row"} key={incident.id}>
+                  <div><span>{incident.alertType.toUpperCase()}</span><p>{incident.message}</p></div>
+                  <time>{formatTime(incident.createdAt)}</time>
+                  {incident.status === "open" ? <button className="construct-button" onClick={() => acknowledgeIncident.mutate({ tenantId, incidentId: incident.id })} disabled={acknowledgeIncident.isPending}>ACKNOWLEDGE</button> : <strong>ACKNOWLEDGED</strong>}
+                </div>)}
+              </div> : null}
               {isTenantAdmin && alertOverview?.settings ? <div className="alert-deck__controls">
                 <label>MAX COST / USD<input value={costThreshold} inputMode="decimal" onChange={event => setCostThreshold(event.target.value)} /></label>
                 <label>MAX LATENCY / MS<input value={latencyThreshold} inputMode="numeric" onChange={event => setLatencyThreshold(event.target.value)} /></label>
@@ -395,6 +437,14 @@ export default function Home() {
             </div>
             <div className="workflow-run-input"><span>SEQUENTIAL RUN INPUT</span><textarea value={workflowInput} onChange={event => setWorkflowInput(event.target.value)} placeholder="Input passed to starting nodes; every output becomes downstream context." /></div>
             <WorkflowCanvas agents={agents} workflowId={activeWorkflowId} graph={graphDraft} onGraphChange={graph => setGraphDraft(graph as GraphDraft)} />
+            <section className="workflow-history panel">
+              <div className="panel-heading"><span><History size={16} /> RUN REPLAY ARCHIVE</span><span className="panel-index">TENANT-ISOLATED LINEAGE</span></div>
+              {workflowRunsQuery.data?.length ? <div className="workflow-history__rows">{workflowRunsQuery.data.slice(-10).reverse().map(run => <div className="workflow-history__row" key={run.id}>
+                <div><strong>{run.status.toUpperCase()}</strong><span>{formatTime(run.startedAt)} / {numberFormat.format(run.totalTokens)} TOKENS</span></div>
+                <p>{run.replayOfRunId ? `REPLAY OF ${run.replayOfRunId}` : "ORIGINAL RUN"}</p>
+                <button className="construct-button" onClick={() => replayWorkflow.mutate({ tenantId, sourceWorkflowRunId: run.id })} disabled={replayWorkflow.isPending}><RotateCcw size={14} /> REPLAY</button>
+              </div>)}</div> : <div className="empty-grid-note">Save and run a connected graph to create replayable tenant history.</div>}
+            </section>
           </section>
         ) : null}
 
@@ -434,13 +484,13 @@ export default function Home() {
           <section className="collaboration-view">
             <div className="registry-toolbar"><div><div className="section-kicker">ACCESS CONTROL / ACTIVE TENANT</div><h2>COLLABORATOR MATRIX</h2></div><span className="trace-count">{collaboratorsQuery.data?.members.length || 0} MEMBERS</span></div>
             {isTenantAdmin ? <section className="collaboration-invite panel">
-              <div className="panel-heading"><span><UserPlus size={16} /> INVITE COLLABORATOR</span><span className="panel-index">ACTIVATES ON SIGN-IN</span></div>
+              <div className="panel-heading"><span><UserPlus size={16} /> INVITE COLLABORATOR</span><span className="panel-index">ACTIVATES ON SIGN-IN / EMAIL AWAITS VERIFIED SENDER</span></div>
               <div className="collaboration-invite__form"><input type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} placeholder="COLLABORATOR@DOMAIN.COM" /><select value={inviteRole} onChange={event => setInviteRole(event.target.value as "admin" | "user")}><option value="user">USER / EXECUTE + VIEW</option><option value="admin">ADMIN / MANAGE + CONFIGURE</option></select><button className="construct-button construct-button--solid" onClick={() => inviteCollaborator.mutate({ tenantId, email: inviteEmail, role: inviteRole })} disabled={!inviteEmail || inviteCollaborator.isPending}><UserPlus size={15} /> ISSUE INVITE</button></div>
             </section> : <div className="empty-grid-note">Your current tenant role is read-only for collaboration administration.</div>}
             <div className="collaborator-table">
               <div className="collaborator-table__head"><span>OPERATOR</span><span>ACCESS ROLE</span><span>MEMBERSHIP</span><span>CONTROL</span></div>
               {collaboratorsQuery.data?.members.map(member => <div className="collaborator-table__row" key={member.userId}><div><strong>{member.name || "UNNAMED OPERATOR"}</strong><small>{member.email || "NO EMAIL AVAILABLE"}</small></div><select value={member.role} onChange={event => changeCollaboratorRole.mutate({ tenantId, userId: member.userId, role: event.target.value as "admin" | "user" })} disabled={!isTenantAdmin || member.userId === user.id}><option value="admin">ADMIN</option><option value="user">USER</option></select><span className="collaborator-status">ACTIVE / {formatTime(member.createdAt)}</span><button className="icon-button danger" title="Remove collaborator" onClick={() => { if (window.confirm("Remove this collaborator from the current tenant?")) removeCollaborator.mutate({ tenantId, userId: member.userId }); }} disabled={!isTenantAdmin || member.userId === user.id}><Trash2 size={16} /></button></div>)}
-              {collaboratorsQuery.data?.invitations.filter(invitation => invitation.status === "pending").map(invitation => <div className="collaborator-table__row collaborator-table__row--pending" key={invitation.id}><div><strong>{invitation.email}</strong><small>INVITED BY TENANT ADMINISTRATOR</small></div><span className="mono">{invitation.role.toUpperCase()}</span><span className="collaborator-status">PENDING / {formatTime(invitation.createdAt)}</span><span className="pending-mark">AWAITING AUTH</span></div>)}
+              {collaboratorsQuery.data?.invitations.filter(invitation => invitation.status === "pending").map(invitation => <div className="collaborator-table__row collaborator-table__row--pending" key={invitation.id}><div><strong>{invitation.email}</strong><small>INVITED BY TENANT ADMINISTRATOR</small></div><span className="mono">{invitation.role.toUpperCase()}</span><span className="collaborator-status">PENDING / {formatTime(invitation.createdAt)}</span><div className="pending-delivery"><span className="pending-mark">{invitation.deliveryStatus === "sent" ? "EMAIL SENT" : invitation.deliveryStatus === "failed" ? "DELIVERY FAILED" : "AWAITING VERIFIED SENDER"}</span>{isTenantAdmin && invitation.deliveryStatus !== "sent" ? <button className="construct-button" onClick={() => redeliverInvitation.mutate({ tenantId, invitationId: invitation.id })} disabled={redeliverInvitation.isPending}>RETRY</button> : null}</div></div>)}
               {!collaboratorsQuery.data?.members.length ? <div className="empty-grid-note">No collaborator records are available for this tenant.</div> : null}
             </div>
           </section>

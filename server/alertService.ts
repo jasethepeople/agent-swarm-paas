@@ -1,5 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
-import { alertSettings, executions, modelSelections } from "../drizzle/schema";
+import { nanoid } from "nanoid";
+import { alertIncidents, alertSettings, executions, modelSelections } from "../drizzle/schema";
 import { getDb } from "./db";
 
 const requireDb = async () => {
@@ -13,6 +14,15 @@ export type AlertSignal = {
   executionId: string | null;
   message: string;
   value: number;
+};
+
+export type AlertIncidentView = AlertSignal & {
+  id: string;
+  status: "open" | "acknowledged";
+  fingerprint: string;
+  acknowledgedAt: Date | null;
+  acknowledgedBy: number | null;
+  createdAt: Date;
 };
 
 export function evaluateAlerts(input: {
@@ -74,5 +84,57 @@ export async function getTenantAlertOverview(tenantId: string) {
     db.select().from(executions).where(eq(executions.tenantId, tenantId)).orderBy(desc(executions.startedAt)).limit(24),
     db.select().from(modelSelections).where(eq(modelSelections.tenantId, tenantId)).orderBy(desc(modelSelections.selectedAt)).limit(24),
   ]);
-  return { settings, alerts: evaluateAlerts({ settings, executions: recentExecutions, selections: recentSelections }) };
+  const alerts = evaluateAlerts({ settings, executions: recentExecutions, selections: recentSelections });
+  await syncAlertIncidents(tenantId, alerts, settings.maxExecutionCostMicros, settings.maxLatencyMs);
+  const incidents = await listAlertIncidents(tenantId);
+  return { settings, alerts, incidents };
+}
+
+function incidentFingerprint(signal: AlertSignal) {
+  if (signal.executionId) return `${signal.type}:${signal.executionId}`;
+  return `failure:${new Date().toISOString().slice(0, 13)}`;
+}
+
+async function syncAlertIncidents(
+  tenantId: string,
+  alerts: AlertSignal[],
+  maxExecutionCostMicros: number,
+  maxLatencyMs: number,
+) {
+  const db = await requireDb();
+  for (const alert of alerts) {
+    const thresholdValue = alert.type === "cost" ? maxExecutionCostMicros : alert.type === "latency" ? maxLatencyMs : alert.value;
+    await db
+      .insert(alertIncidents)
+      .values({
+        id: nanoid(18),
+        tenantId,
+        fingerprint: incidentFingerprint(alert),
+        alertType: alert.type,
+        executionId: alert.executionId,
+        message: alert.message,
+        observedValue: alert.value,
+        thresholdValue,
+      })
+      .onDuplicateKeyUpdate({ set: { message: alert.message, observedValue: alert.value, thresholdValue, updatedAt: new Date() } });
+  }
+}
+
+export async function listAlertIncidents(tenantId: string) {
+  const db = await requireDb();
+  return db
+    .select()
+    .from(alertIncidents)
+    .where(eq(alertIncidents.tenantId, tenantId))
+    .orderBy(desc(alertIncidents.createdAt))
+    .limit(80);
+}
+
+export async function acknowledgeAlertIncident(input: { tenantId: string; incidentId: string; acknowledgedBy: number }) {
+  const db = await requireDb();
+  const result = await db
+    .update(alertIncidents)
+    .set({ status: "acknowledged", acknowledgedBy: input.acknowledgedBy, acknowledgedAt: new Date() })
+    .where(and(eq(alertIncidents.tenantId, input.tenantId), eq(alertIncidents.id, input.incidentId), eq(alertIncidents.status, "open")));
+  return result[0]?.affectedRows ?? 0;
 }

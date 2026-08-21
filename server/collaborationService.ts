@@ -1,7 +1,8 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { tenantInvitations, tenantMemberships, users } from "../drizzle/schema";
+import { tenantInvitations, tenantMemberships, tenants, users } from "../drizzle/schema";
 import { getDb } from "./db";
+import { sendInvitationEmail } from "./invitationEmailService";
 
 const requireDb = async () => {
   const db = await getDb();
@@ -79,8 +80,46 @@ export async function inviteCollaborator(input: {
   await db
     .insert(tenantInvitations)
     .values({ id, tenantId: input.tenantId, email, role: input.role, invitedBy: input.invitedBy })
-    .onDuplicateKeyUpdate({ set: { role: input.role, status: "pending", invitedBy: input.invitedBy, createdAt: new Date(), acceptedAt: null } });
-  return { id, email, role: input.role, status: "pending" as const };
+    .onDuplicateKeyUpdate({
+      set: {
+        role: input.role,
+        status: "pending",
+        invitedBy: input.invitedBy,
+        deliveryStatus: "not_sent",
+        providerMessageId: null,
+        sentAt: null,
+        deliveryError: null,
+        createdAt: new Date(),
+        acceptedAt: null,
+      },
+    });
+  const invitation = (await db.select().from(tenantInvitations).where(and(eq(tenantInvitations.tenantId, input.tenantId), eq(tenantInvitations.email, email))).limit(1))[0]!;
+  return deliverInvitationForTenant({ tenantId: input.tenantId, invitationId: invitation.id });
+}
+
+export async function deliverInvitationForTenant(input: { tenantId: string; invitationId: string }) {
+  const db = await requireDb();
+  const invitation = (await db
+    .select()
+    .from(tenantInvitations)
+    .where(and(eq(tenantInvitations.tenantId, input.tenantId), eq(tenantInvitations.id, input.invitationId)))
+    .limit(1))[0];
+  if (!invitation) throw new Error("Pending invitation not found in the active tenant.");
+  if (invitation.status !== "pending") throw new Error("Only pending invitations can be delivered.");
+  const tenant = (await db.select().from(tenants).where(eq(tenants.id, input.tenantId)).limit(1))[0];
+  if (!tenant) throw new Error("Tenant not found for invitation delivery.");
+
+  const delivery = await sendInvitationEmail({ recipient: invitation.email, tenantName: tenant.name, role: invitation.role });
+  await db
+    .update(tenantInvitations)
+    .set({
+      deliveryStatus: delivery.deliveryStatus,
+      providerMessageId: delivery.providerMessageId ?? null,
+      sentAt: delivery.deliveryStatus === "sent" ? new Date() : null,
+      deliveryError: delivery.deliveryError ?? null,
+    })
+    .where(and(eq(tenantInvitations.tenantId, input.tenantId), eq(tenantInvitations.id, input.invitationId)));
+  return { id: invitation.id, email: invitation.email, role: invitation.role, status: invitation.status, ...delivery };
 }
 
 export async function updateCollaboratorRole(input: { tenantId: string; userId: number; role: "admin" | "user" }) {

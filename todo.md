@@ -25,3 +25,14 @@
 - [x] Add tests for tenant-member administration, sequential graph validation, and alert evaluation.
 - [x] Re-run type checks, tests, and desktop/mobile visual verification for the extension.
 - [x] Review desktop and mobile captures: alert emphasis, graph-run controls, and five-item navigation remain legible and responsive without radius or shadow regressions.
+- [x] Add replay metadata, invitation delivery state, and incident-history persistence to the tenant-isolated data model.
+- [x] Add workflow-run replay APIs that reuse original input and graph while preserving a link to the source run.
+- [ ] Add invitation delivery states and real email delivery through an available secure mail integration.
+- [ ] Provide a verified `RESEND_FROM_EMAIL` sender identity, validate its domain, and activate real invitation-email delivery.
+- [x] Add server-side alert incident creation and acknowledgement controls scoped to the active tenant.
+- [x] Add replay controls, invitation delivery feedback, and an incident-history panel to the workspace interface.
+- [x] Add tests for replay lineage and tenant-isolated incident acknowledgement.
+- [ ] Add invitation delivery handling tests after a verified sender identity is supplied and delivery is activated.
+- [x] Test invitation delivery’s safe deferred-sender behavior and its verified-sender request path with a mocked provider response.
+- [x] Re-run type checks, tests, and responsive visual verification for the final iteration.
+- [x] Document final visual QA for replay archive layout, incident acknowledgement controls, invitation delivery feedback, responsive behavior, and zero-radius/zero-shadow compliance.

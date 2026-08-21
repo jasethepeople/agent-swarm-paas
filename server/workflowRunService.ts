@@ -56,6 +56,7 @@ export async function runSequentialWorkflow(input: {
   workflowId: string;
   requestedBy: number;
   initialInput: string;
+  replayOfRunId?: string;
 }) {
   const db = await requireDb();
   const workflow = await getWorkflowForTenant(input.tenantId, input.workflowId);
@@ -70,10 +71,18 @@ export async function runSequentialWorkflow(input: {
     id: workflowRunId,
     tenantId: input.tenantId,
     workflowId: input.workflowId,
+    replayOfRunId: input.replayOfRunId ?? null,
     requestedBy: input.requestedBy,
     initialInput: input.initialInput,
   });
-  await appendRunTrace({ tenantId: input.tenantId, workflowRunId, eventType: "workflow.started", message: `Sequential run opened with ${plan.length} connected agent nodes.` });
+  await appendRunTrace({
+    tenantId: input.tenantId,
+    workflowRunId,
+    eventType: "workflow.started",
+    message: input.replayOfRunId
+      ? `Replay opened from run ${input.replayOfRunId} with ${plan.length} connected agent nodes.`
+      : `Sequential run opened with ${plan.length} connected agent nodes.`,
+  });
 
   const outputByNode = new Map<string, string>();
   let totalTokens = 0;
@@ -149,6 +158,29 @@ export async function runSequentialWorkflow(input: {
     await appendRunTrace({ tenantId: input.tenantId, workflowRunId, level: "error", eventType: "workflow.failed", message });
     throw error;
   }
+}
+
+export async function replayWorkflowRun(input: { tenantId: string; sourceWorkflowRunId: string; requestedBy: number }) {
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(workflowRuns)
+    .where(and(eq(workflowRuns.tenantId, input.tenantId), eq(workflowRuns.id, input.sourceWorkflowRunId)))
+    .limit(1);
+  const source = rows[0];
+  if (!source) throw new Error("The source workflow run is not available in the active tenant.");
+  return runSequentialWorkflow({
+    tenantId: input.tenantId,
+    workflowId: source.workflowId,
+    requestedBy: input.requestedBy,
+    initialInput: source.initialInput,
+    replayOfRunId: source.id,
+  });
+}
+
+export async function listWorkflowRunsForTenant(tenantId: string) {
+  const db = await requireDb();
+  return db.select().from(workflowRuns).where(eq(workflowRuns.tenantId, tenantId)).orderBy(workflowRuns.startedAt).limit(40);
 }
 
 async function appendRunTrace(input: {
