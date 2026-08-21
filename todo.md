@@ -36,3 +36,10 @@
 - [x] Test invitation delivery’s safe deferred-sender behavior and its verified-sender request path with a mocked provider response.
 - [x] Re-run type checks, tests, and responsive visual verification for the final iteration.
 - [x] Document final visual QA for replay archive layout, incident acknowledgement controls, invitation delivery feedback, responsive behavior, and zero-radius/zero-shadow compliance.
+- [x] Add tenant-safe workflow-run detail retrieval with linked node executions and workflow handoff traces.
+- [x] Add reusable workflow duplication to accelerate creation of controlled graph variants.
+- [x] Add incident history filtering for open versus acknowledged alert records.
+- [x] Add run-detail, workflow-duplication, and incident-filter controls to the Neo-Constructivist workspace.
+- [x] Add unit coverage for tenant-scoped run detail and workflow duplication.
+- [x] Re-run type checks, tests, and responsive visual verification for the operations iteration.
+- [x] Document visual QA for workflow duplication, run-detail drill-down, incident filtering, responsiveness, and zero-radius/zero-shadow compliance.

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const orchestrationDb = vi.hoisted(() => ({ consumeTenantQuota: vi.fn(), getTenantScope: vi.fn() }));
-const workflows = vi.hoisted(() => ({ listWorkflowRunsForTenant: vi.fn(), replayWorkflowRun: vi.fn(), runSequentialWorkflow: vi.fn() }));
+const orchestrationDb = vi.hoisted(() => ({ consumeTenantQuota: vi.fn(), duplicateWorkflowForTenant: vi.fn(), getTenantScope: vi.fn() }));
+const workflows = vi.hoisted(() => ({ getWorkflowRunDetail: vi.fn(), listWorkflowRunsForTenant: vi.fn(), replayWorkflowRun: vi.fn(), runSequentialWorkflow: vi.fn() }));
 const alerts = vi.hoisted(() => ({ acknowledgeAlertIncident: vi.fn(), getTenantAlertOverview: vi.fn(), updateAlertSettings: vi.fn() }));
 
 vi.mock("./orchestrationDb", async importOriginal => ({ ...(await importOriginal<typeof import("./orchestrationDb")>()), ...orchestrationDb }));
@@ -37,6 +37,25 @@ describe("replay and incident router", () => {
 
     await expect(caller.orchestration.observability.acknowledgeIncident({ tenantId: "tenant-alpha", incidentId: "incident-1" })).resolves.toEqual({ success: true });
     expect(alerts.acknowledgeAlertIncident).toHaveBeenCalledWith({ tenantId: "tenant-alpha", incidentId: "incident-1", acknowledgedBy: user.id });
+  });
+
+  it("duplicates a workflow under the active tenant and current operator", async () => {
+    orchestrationDb.getTenantScope.mockResolvedValue({ tenant: { id: "tenant-alpha" }, membership: { role: "admin" } });
+    orchestrationDb.duplicateWorkflowForTenant.mockResolvedValue({ id: "workflow-copy", name: "Graph / COPY", graph: { nodes: [], edges: [] } });
+    const caller = appRouter.createCaller(context());
+
+    const duplicated = await caller.orchestration.workflows.duplicate({ tenantId: "tenant-alpha", workflowId: "workflow-source" });
+
+    expect(duplicated.id).toBe("workflow-copy");
+    expect(orchestrationDb.duplicateWorkflowForTenant).toHaveBeenCalledWith({ tenantId: "tenant-alpha", workflowId: "workflow-source", createdBy: user.id });
+  });
+
+  it("returns a run-detail view only for a run inside the active tenant", async () => {
+    workflows.getWorkflowRunDetail.mockResolvedValue({ run: { id: "run-1" }, nodeExecutions: [], handoffs: [] });
+    const caller = appRouter.createCaller(context());
+
+    await expect(caller.orchestration.workflows.detail({ tenantId: "tenant-alpha", workflowRunId: "run-1" })).resolves.toMatchObject({ run: { id: "run-1" } });
+    expect(workflows.getWorkflowRunDetail).toHaveBeenCalledWith("tenant-alpha", "run-1");
   });
 
   it("rejects replay access before calling services when tenant membership is absent", async () => {

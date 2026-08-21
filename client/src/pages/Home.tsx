@@ -1,6 +1,8 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "@/const";
 import WorkflowCanvas from "@/components/WorkflowCanvas";
+import IncidentHistoryPanel from "@/components/IncidentHistoryPanel";
+import WorkflowOperationsPanel from "@/components/WorkflowOperationsPanel";
 import { trpc } from "@/lib/trpc";
 import "@/styles/replay.css";
 import { toast } from "sonner";
@@ -362,6 +364,7 @@ export default function Home() {
                 <button className="construct-button" onClick={() => updateAlerts.mutate({ tenantId, enabled: alertOverview.settings.enabled, maxExecutionCostMicros: Math.max(1, Math.round(Number(costThreshold) * 1_000_000)), maxLatencyMs: Math.max(100, Number(latencyThreshold)), maxFailures: Math.max(1, Number(failureThreshold)) })} disabled={updateAlerts.isPending}>ARM THRESHOLDS</button>
               </div> : null}
             </section>
+            <IncidentHistoryPanel tenantId={tenantId} />
 
             <section className="panel execution-console">
               <div className="panel-heading"><span><Zap size={16} /> EXECUTION CONSOLE</span><span className="panel-index">LIVE / REAL INFERENCE</span></div>
@@ -437,6 +440,7 @@ export default function Home() {
             </div>
             <div className="workflow-run-input"><span>SEQUENTIAL RUN INPUT</span><textarea value={workflowInput} onChange={event => setWorkflowInput(event.target.value)} placeholder="Input passed to starting nodes; every output becomes downstream context." /></div>
             <WorkflowCanvas agents={agents} workflowId={activeWorkflowId} graph={graphDraft} onGraphChange={graph => setGraphDraft(graph as GraphDraft)} />
+            <WorkflowOperationsPanel tenantId={tenantId} activeWorkflowId={activeWorkflowId} isTenantAdmin={isTenantAdmin} onWorkflowDuplicated={workflow => { setActiveWorkflowId(workflow.id); setWorkflowName(workflow.name); setGraphDraft((workflow.graph as GraphDraft) || emptyGraph); }} />
             <section className="workflow-history panel">
               <div className="panel-heading"><span><History size={16} /> RUN REPLAY ARCHIVE</span><span className="panel-index">TENANT-ISOLATED LINEAGE</span></div>
               {workflowRunsQuery.data?.length ? <div className="workflow-history__rows">{workflowRunsQuery.data.slice(-10).reverse().map(run => <div className="workflow-history__row" key={run.id}>

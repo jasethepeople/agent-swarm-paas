@@ -215,6 +215,17 @@ export async function saveWorkflowForTenant(input: {
   return getWorkflowForTenant(input.tenantId, id);
 }
 
+export async function duplicateWorkflowForTenant(input: { tenantId: string; workflowId: string; createdBy: number; name?: string }) {
+  const source = await getWorkflowForTenant(input.tenantId, input.workflowId);
+  if (!source) return null;
+  return saveWorkflowForTenant({
+    tenantId: input.tenantId,
+    createdBy: input.createdBy,
+    name: input.name?.trim() || `${source.name} / COPY`,
+    graph: source.graph,
+  });
+}
+
 export async function deleteWorkflowForTenant(tenantId: string, workflowId: string) {
   const db = await requireDb();
   const result = await db.delete(workflows).where(and(eq(workflows.tenantId, tenantId), eq(workflows.id, workflowId)));

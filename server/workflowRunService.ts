@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { executions, workflowRuns, workflowRunTraces } from "../drizzle/schema";
 import { getDb } from "./db";
@@ -180,7 +180,30 @@ export async function replayWorkflowRun(input: { tenantId: string; sourceWorkflo
 
 export async function listWorkflowRunsForTenant(tenantId: string) {
   const db = await requireDb();
-  return db.select().from(workflowRuns).where(eq(workflowRuns.tenantId, tenantId)).orderBy(workflowRuns.startedAt).limit(40);
+  return db.select().from(workflowRuns).where(eq(workflowRuns.tenantId, tenantId)).orderBy(desc(workflowRuns.startedAt)).limit(40);
+}
+
+export async function getWorkflowRunDetail(tenantId: string, workflowRunId: string) {
+  const db = await requireDb();
+  const run = (await db
+    .select()
+    .from(workflowRuns)
+    .where(and(eq(workflowRuns.tenantId, tenantId), eq(workflowRuns.id, workflowRunId)))
+    .limit(1))[0];
+  if (!run) return null;
+  const [nodeExecutions, handoffs] = await Promise.all([
+    db
+      .select()
+      .from(executions)
+      .where(and(eq(executions.tenantId, tenantId), eq(executions.workflowRunId, workflowRunId)))
+      .orderBy(executions.startedAt),
+    db
+      .select()
+      .from(workflowRunTraces)
+      .where(and(eq(workflowRunTraces.tenantId, tenantId), eq(workflowRunTraces.workflowRunId, workflowRunId)))
+      .orderBy(workflowRunTraces.createdAt),
+  ]);
+  return { run, nodeExecutions, handoffs };
 }
 
 async function appendRunTrace(input: {

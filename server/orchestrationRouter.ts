@@ -8,6 +8,7 @@ import {
   createTenantForUser,
   deleteAgentForTenant,
   deleteWorkflowForTenant,
+  duplicateWorkflowForTenant,
   ensureDefaultTenantForUser,
   getAgentForTenant,
   getObservabilitySnapshot,
@@ -20,7 +21,7 @@ import { runRoutedInference } from "./llmRouter";
 import { protectedProcedure, router, tenantAdminProcedure, tenantProcedure } from "./_core/trpc";
 import { acknowledgeAlertIncident, getTenantAlertOverview, updateAlertSettings } from "./alertService";
 import { acceptPendingInvitationsForUser, deliverInvitationForTenant, inviteCollaborator, listCollaboratorsForTenant, removeCollaborator, updateCollaboratorRole } from "./collaborationService";
-import { listWorkflowRunsForTenant, replayWorkflowRun, runSequentialWorkflow } from "./workflowRunService";
+import { getWorkflowRunDetail, listWorkflowRunsForTenant, replayWorkflowRun, runSequentialWorkflow } from "./workflowRunService";
 
 const graphNode = z.object({
   id: z.string().min(1).max(80),
@@ -116,6 +117,13 @@ export const orchestrationRouter = router({
         }
       }),
     runs: tenantProcedure.query(({ ctx }) => listWorkflowRunsForTenant(ctx.tenant.id)),
+    detail: tenantProcedure
+      .input(z.object({ workflowRunId: z.string().min(1).max(40) }))
+      .query(async ({ ctx, input }) => {
+        const detail = await getWorkflowRunDetail(ctx.tenant.id, input.workflowRunId);
+        if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow run not found in the active tenant." });
+        return detail;
+      }),
     replay: tenantProcedure
       .input(z.object({ sourceWorkflowRunId: z.string().min(1).max(40) }))
       .mutation(async ({ ctx, input }) => {
@@ -128,6 +136,13 @@ export const orchestrationRouter = router({
         } catch (error) {
           throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Workflow replay could not start." });
         }
+      }),
+    duplicate: tenantAdminProcedure
+      .input(z.object({ workflowId: z.string().min(1).max(40), name: z.string().min(2).max(120).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const workflow = await duplicateWorkflowForTenant({ ...input, tenantId: ctx.tenant.id, createdBy: ctx.user!.id });
+        if (!workflow) throw new TRPCError({ code: "NOT_FOUND", message: "Workflow not found in the active tenant." });
+        return workflow;
       }),
     delete: tenantAdminProcedure
       .input(z.object({ workflowId: z.string().min(1).max(40) }))
