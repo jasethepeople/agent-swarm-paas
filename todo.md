@@ -16,3 +16,12 @@
 - [x] Add Vitest coverage for tenant isolation, rate limiting, and model scoring.
 - [x] Add Vitest coverage for workflow graph validation.
 - [x] Run type checking, tests, and visual verification at desktop and mobile breakpoints.
+- [x] Define pending invitation, workflow-run, workflow-trace, and alert-threshold schema records.
+- [x] Use privacy-preserving email invitations instead of cross-tenant user discovery; expose collaborator records only inside tenant administration.
+- [x] Extend workflow execution to topologically run connected graph nodes and pass each output to downstream agents.
+- [x] Persist workflow-level trace events and linked per-node execution results for sequential runs.
+- [x] Add tenant-configurable cost, latency, and failure-rate alert thresholds with server-side alert evaluation.
+- [x] Add collaboration management, workflow execution controls, and alert status panels to the Neo-Constructivist interface.
+- [x] Add tests for tenant-member administration, sequential graph validation, and alert evaluation.
+- [x] Re-run type checks, tests, and desktop/mobile visual verification for the extension.
+- [x] Review desktop and mobile captures: alert emphasis, graph-run controls, and five-item navigation remain legible and responsive without radius or shadow regressions.

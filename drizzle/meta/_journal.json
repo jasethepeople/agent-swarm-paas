@@ -15,6 +15,13 @@
       "when": 1787312138950,
       "tag": "0001_slim_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787314918402,
+      "tag": "0002_same_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
   Activity,
+  AlertTriangle,
   ArrowUpRight,
   Bot,
   Braces,
@@ -19,19 +20,22 @@ import {
   LogOut,
   Network,
   Plus,
+  Play,
   Radio,
   Save,
   Send,
   Terminal,
   Trash2,
   UserRound,
+  UserPlus,
+  UsersRound,
   Workflow,
   X,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-type WorkspaceView = "overview" | "workflow" | "agents" | "traces";
+type WorkspaceView = "overview" | "workflow" | "agents" | "traces" | "collaboration";
 type GraphDraft = { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> };
 
 const numberFormat = new Intl.NumberFormat("en-US");
@@ -41,6 +45,7 @@ const navItems: Array<{ id: WorkspaceView; label: string; icon: typeof Gauge }> 
   { id: "overview", label: "CONTROL ROOM", icon: Gauge },
   { id: "workflow", label: "SWARM GRAPH", icon: Network },
   { id: "agents", label: "AGENT REGISTRY", icon: Bot },
+  { id: "collaboration", label: "COLLABORATORS", icon: UsersRound },
   { id: "traces", label: "TRACE ARCHIVE", icon: Terminal },
 ];
 
@@ -75,7 +80,13 @@ export default function Home() {
   const [graphDraft, setGraphDraft] = useState<GraphDraft>(emptyGraph);
   const [runAgentId, setRunAgentId] = useState("");
   const [runPrompt, setRunPrompt] = useState("Analyze the current orchestration objective and return the next operational action.");
+  const [workflowInput, setWorkflowInput] = useState("Analyze the current orchestration objective and return the next operational action.");
   const [latestOutput, setLatestOutput] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"admin" | "user">("user");
+  const [costThreshold, setCostThreshold] = useState("0.0750");
+  const [latencyThreshold, setLatencyThreshold] = useState("8000");
+  const [failureThreshold, setFailureThreshold] = useState("1");
 
   const tenantsQuery = trpc.orchestration.workspace.listTenants.useQuery(undefined, { enabled: !!user });
   const activeTenant = useMemo(() => tenantsQuery.data?.find(tenant => tenant.id === tenantId), [tenantId, tenantsQuery.data]);
@@ -84,6 +95,8 @@ export default function Home() {
   const agentsQuery = trpc.orchestration.agents.list.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 10_000 });
   const workflowsQuery = trpc.orchestration.workflows.list.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 10_000 });
   const observabilityQuery = trpc.orchestration.observability.snapshot.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 5_000 });
+  const alertsQuery = trpc.orchestration.observability.alerts.useQuery(gatewayInput, { enabled: queryEnabled, refetchInterval: 5_000 });
+  const collaboratorsQuery = trpc.orchestration.collaboration.list.useQuery(gatewayInput, { enabled: queryEnabled && activeTenant?.membershipRole === "admin", refetchInterval: 10_000 });
 
   useEffect(() => {
     if (!tenantId && tenantsQuery.data?.[0]) setTenantId(tenantsQuery.data[0].id);
@@ -92,6 +105,13 @@ export default function Home() {
   useEffect(() => {
     if (!runAgentId && agentsQuery.data?.[0]) setRunAgentId(agentsQuery.data[0].id);
   }, [agentsQuery.data, runAgentId]);
+
+  useEffect(() => {
+    if (!alertsQuery.data?.settings) return;
+    setCostThreshold((alertsQuery.data.settings.maxExecutionCostMicros / 1_000_000).toFixed(4));
+    setLatencyThreshold(String(alertsQuery.data.settings.maxLatencyMs));
+    setFailureThreshold(String(alertsQuery.data.settings.maxFailures));
+  }, [alertsQuery.data?.settings]);
 
   const createAgent = trpc.orchestration.agents.create.useMutation({
     onSuccess: async () => {
@@ -146,6 +166,48 @@ export default function Home() {
     onError: error => toast.error(error.message),
   });
 
+  const runWorkflow = trpc.orchestration.workflows.run.useMutation({
+    onSuccess: async result => {
+      setLatestOutput(result.output);
+      await Promise.all([
+        utils.orchestration.observability.snapshot.invalidate(gatewayInput),
+        utils.orchestration.observability.alerts.invalidate(gatewayInput),
+      ]);
+      toast.success(`Sequential workflow run completed with ${numberFormat.format(result.totalTokens)} tokens.`);
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const inviteCollaborator = trpc.orchestration.collaboration.invite.useMutation({
+    onSuccess: async invitation => {
+      setInviteEmail("");
+      await utils.orchestration.collaboration.list.invalidate(gatewayInput);
+      toast.success(`Invitation staged for ${invitation.email}. It activates when that user signs in.`);
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const changeCollaboratorRole = trpc.orchestration.collaboration.changeRole.useMutation({
+    onSuccess: () => utils.orchestration.collaboration.list.invalidate(gatewayInput),
+    onError: error => toast.error(error.message),
+  });
+
+  const removeCollaborator = trpc.orchestration.collaboration.remove.useMutation({
+    onSuccess: () => {
+      utils.orchestration.collaboration.list.invalidate(gatewayInput);
+      toast.success("Collaborator removed from this tenant.");
+    },
+    onError: error => toast.error(error.message),
+  });
+
+  const updateAlerts = trpc.orchestration.observability.updateAlerts.useMutation({
+    onSuccess: () => {
+      utils.orchestration.observability.alerts.invalidate(gatewayInput);
+      toast.success("Tenant alert thresholds updated.");
+    },
+    onError: error => toast.error(error.message),
+  });
+
   const registerAgent = () => {
     if (!tenantId || agentName.trim().length < 2 || agentPrompt.trim().length < 10) return;
     createAgent.mutate({
@@ -166,6 +228,7 @@ export default function Home() {
   const isTenantAdmin = activeTenant?.membershipRole === "admin";
   const agents = agentsQuery.data ?? [];
   const snapshot = observabilityQuery.data;
+  const alertOverview = alertsQuery.data;
 
   if (loading || tenantsQuery.isLoading) {
     return <div className="system-loader"><Loader2 size={24} className="spin" /> INITIALIZING TENANT COMMAND SURFACE</div>;
@@ -231,7 +294,7 @@ export default function Home() {
         <section className="headline-band">
           <div>
             <div className="section-kicker">TENANT / {activeTenant?.slug || "SYNCING"}</div>
-            <h1>{activeView === "overview" ? "COMMAND ROOM" : activeView === "workflow" ? "SWARM GRAPH" : activeView === "agents" ? "AGENT REGISTRY" : "TRACE ARCHIVE"}</h1>
+            <h1>{activeView === "overview" ? "COMMAND ROOM" : activeView === "workflow" ? "SWARM GRAPH" : activeView === "agents" ? "AGENT REGISTRY" : activeView === "collaboration" ? "COLLABORATORS" : "TRACE ARCHIVE"}</h1>
           </div>
           <div className="headline-band__signal"><Radio size={16} /> LIVE DATA / 5S REFRESH</div>
         </section>
@@ -244,6 +307,19 @@ export default function Home() {
               <MetricCell label="EST. INFERENCE COST" value={currencyFormat.format((snapshot?.usage.totalCostMicros || 0) / 1_000_000)} sublabel="ROUTER ESTIMATE" />
               <MetricCell label="LIVE AGENTS" value={numberFormat.format(agents.filter(agent => agent.status === "enabled").length)} sublabel="ENABLED / TENANT" />
             </div>
+
+            <section className={alertOverview?.alerts.length ? "alert-deck alert-deck--active" : "alert-deck"}>
+              <div className="alert-deck__header"><span><AlertTriangle size={17} /> OPERATIONAL ALERT MATRIX</span><strong>{alertOverview?.alerts.length || 0} ACTIVE</strong></div>
+              <div className="alert-deck__signals">
+                {alertOverview?.alerts.length ? alertOverview.alerts.map((alert, index) => <div className="alert-signal" key={`${alert.type}-${alert.executionId}-${index}`}><span>{alert.type.toUpperCase()}</span><p>{alert.message}</p><strong>{alert.type === "cost" ? currencyFormat.format(alert.value / 1_000_000) : alert.type === "latency" ? `${alert.value} MS` : `${alert.value} FAILURES`}</strong></div>) : <div className="alert-deck__clear">THRESHOLDS ARMED. NO COST, LATENCY, OR FAILURE BREACHES DETECTED.</div>}
+              </div>
+              {isTenantAdmin && alertOverview?.settings ? <div className="alert-deck__controls">
+                <label>MAX COST / USD<input value={costThreshold} inputMode="decimal" onChange={event => setCostThreshold(event.target.value)} /></label>
+                <label>MAX LATENCY / MS<input value={latencyThreshold} inputMode="numeric" onChange={event => setLatencyThreshold(event.target.value)} /></label>
+                <label>MAX FAILURES<input value={failureThreshold} inputMode="numeric" onChange={event => setFailureThreshold(event.target.value)} /></label>
+                <button className="construct-button" onClick={() => updateAlerts.mutate({ tenantId, enabled: alertOverview.settings.enabled, maxExecutionCostMicros: Math.max(1, Math.round(Number(costThreshold) * 1_000_000)), maxLatencyMs: Math.max(100, Number(latencyThreshold)), maxFailures: Math.max(1, Number(failureThreshold)) })} disabled={updateAlerts.isPending}>ARM THRESHOLDS</button>
+              </div> : null}
+            </section>
 
             <section className="panel execution-console">
               <div className="panel-heading"><span><Zap size={16} /> EXECUTION CONSOLE</span><span className="panel-index">LIVE / REAL INFERENCE</span></div>
@@ -311,9 +387,13 @@ export default function Home() {
                 <button className="construct-button" onClick={() => saveWorkflow.mutate({ tenantId, workflowId: activeWorkflowId, name: workflowName, graph: graphDraft as any })} disabled={!isTenantAdmin || saveWorkflow.isPending}>
                   <Save size={15} /> SAVE GRAPH
                 </button>
+                <button className="construct-button construct-button--solid" onClick={() => activeWorkflowId && runWorkflow.mutate({ tenantId, workflowId: activeWorkflowId, initialInput: workflowInput })} disabled={!activeWorkflowId || runWorkflow.isPending}>
+                  {runWorkflow.isPending ? <Loader2 className="spin" size={15} /> : <Play size={15} />} {runWorkflow.isPending ? "RUNNING GRAPH" : "RUN GRAPH"}
+                </button>
                 {activeWorkflowId ? <button className="icon-button danger" onClick={() => deleteWorkflow.mutate({ tenantId, workflowId: activeWorkflowId })} title="Delete workflow"><Trash2 size={16} /></button> : null}
               </div>
             </div>
+            <div className="workflow-run-input"><span>SEQUENTIAL RUN INPUT</span><textarea value={workflowInput} onChange={event => setWorkflowInput(event.target.value)} placeholder="Input passed to starting nodes; every output becomes downstream context." /></div>
             <WorkflowCanvas agents={agents} workflowId={activeWorkflowId} graph={graphDraft} onGraphChange={graph => setGraphDraft(graph as GraphDraft)} />
           </section>
         ) : null}
@@ -346,6 +426,22 @@ export default function Home() {
                 </div>
               ))}
               {!agents.length ? <div className="empty-grid-note agent-empty">The registry is clear. Register a tenant-specific agent to begin building a swarm.</div> : null}
+            </div>
+          </section>
+        ) : null}
+
+        {activeView === "collaboration" ? (
+          <section className="collaboration-view">
+            <div className="registry-toolbar"><div><div className="section-kicker">ACCESS CONTROL / ACTIVE TENANT</div><h2>COLLABORATOR MATRIX</h2></div><span className="trace-count">{collaboratorsQuery.data?.members.length || 0} MEMBERS</span></div>
+            {isTenantAdmin ? <section className="collaboration-invite panel">
+              <div className="panel-heading"><span><UserPlus size={16} /> INVITE COLLABORATOR</span><span className="panel-index">ACTIVATES ON SIGN-IN</span></div>
+              <div className="collaboration-invite__form"><input type="email" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} placeholder="COLLABORATOR@DOMAIN.COM" /><select value={inviteRole} onChange={event => setInviteRole(event.target.value as "admin" | "user")}><option value="user">USER / EXECUTE + VIEW</option><option value="admin">ADMIN / MANAGE + CONFIGURE</option></select><button className="construct-button construct-button--solid" onClick={() => inviteCollaborator.mutate({ tenantId, email: inviteEmail, role: inviteRole })} disabled={!inviteEmail || inviteCollaborator.isPending}><UserPlus size={15} /> ISSUE INVITE</button></div>
+            </section> : <div className="empty-grid-note">Your current tenant role is read-only for collaboration administration.</div>}
+            <div className="collaborator-table">
+              <div className="collaborator-table__head"><span>OPERATOR</span><span>ACCESS ROLE</span><span>MEMBERSHIP</span><span>CONTROL</span></div>
+              {collaboratorsQuery.data?.members.map(member => <div className="collaborator-table__row" key={member.userId}><div><strong>{member.name || "UNNAMED OPERATOR"}</strong><small>{member.email || "NO EMAIL AVAILABLE"}</small></div><select value={member.role} onChange={event => changeCollaboratorRole.mutate({ tenantId, userId: member.userId, role: event.target.value as "admin" | "user" })} disabled={!isTenantAdmin || member.userId === user.id}><option value="admin">ADMIN</option><option value="user">USER</option></select><span className="collaborator-status">ACTIVE / {formatTime(member.createdAt)}</span><button className="icon-button danger" title="Remove collaborator" onClick={() => { if (window.confirm("Remove this collaborator from the current tenant?")) removeCollaborator.mutate({ tenantId, userId: member.userId }); }} disabled={!isTenantAdmin || member.userId === user.id}><Trash2 size={16} /></button></div>)}
+              {collaboratorsQuery.data?.invitations.filter(invitation => invitation.status === "pending").map(invitation => <div className="collaborator-table__row collaborator-table__row--pending" key={invitation.id}><div><strong>{invitation.email}</strong><small>INVITED BY TENANT ADMINISTRATOR</small></div><span className="mono">{invitation.role.toUpperCase()}</span><span className="collaborator-status">PENDING / {formatTime(invitation.createdAt)}</span><span className="pending-mark">AWAITING AUTH</span></div>)}
+              {!collaboratorsQuery.data?.members.length ? <div className="empty-grid-note">No collaborator records are available for this tenant.</div> : null}
             </div>
           </section>
         ) : null}

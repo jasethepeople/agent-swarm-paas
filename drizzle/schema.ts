@@ -47,6 +47,21 @@ export const tenantMemberships = mysqlTable(
   ],
 );
 
+export const tenantInvitations = mysqlTable(
+  "tenantInvitations",
+  {
+    id: varchar("id", { length: 40 }).primaryKey(),
+    tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    email: varchar("email", { length: 320 }).notNull(),
+    role: mysqlEnum("role", ["admin", "user"]).default("user").notNull(),
+    status: mysqlEnum("status", ["pending", "accepted", "revoked"]).default("pending").notNull(),
+    invitedBy: int("invitedBy").notNull().references(() => users.id),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    acceptedAt: timestamp("acceptedAt"),
+  },
+  table => [uniqueIndex("invitation_tenant_email_unique").on(table.tenantId, table.email)],
+);
+
 export const agents = mysqlTable(
   "agents",
   {
@@ -79,12 +94,31 @@ export const workflows = mysqlTable(
   table => [index("workflows_tenant_idx").on(table.tenantId)],
 );
 
+export const workflowRuns = mysqlTable(
+  "workflowRuns",
+  {
+    id: varchar("id", { length: 40 }).primaryKey(),
+    tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    workflowId: varchar("workflowId", { length: 40 }).notNull().references(() => workflows.id),
+    requestedBy: int("requestedBy").notNull().references(() => users.id),
+    status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
+    initialInput: text("initialInput").notNull(),
+    finalOutput: text("finalOutput"),
+    totalTokens: int("totalTokens").default(0).notNull(),
+    estimatedCostMicros: int("estimatedCostMicros").default(0).notNull(),
+    startedAt: timestamp("startedAt").defaultNow().notNull(),
+    completedAt: timestamp("completedAt"),
+  },
+  table => [index("workflow_runs_tenant_started_idx").on(table.tenantId, table.startedAt)],
+);
+
 export const executions = mysqlTable(
   "executions",
   {
     id: varchar("id", { length: 40 }).primaryKey(),
     tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
     workflowId: varchar("workflowId", { length: 40 }).references(() => workflows.id, { onDelete: "set null" }),
+    workflowRunId: varchar("workflowRunId", { length: 40 }).references(() => workflowRuns.id, { onDelete: "set null" }),
     agentId: varchar("agentId", { length: 40 }).notNull().references(() => agents.id),
     requestedBy: int("requestedBy").notNull().references(() => users.id),
     status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
@@ -101,6 +135,7 @@ export const executions = mysqlTable(
   table => [
     index("executions_tenant_started_idx").on(table.tenantId, table.startedAt),
     index("executions_agent_idx").on(table.agentId),
+    index("executions_workflow_run_idx").on(table.workflowRunId),
   ],
 );
 
@@ -140,6 +175,24 @@ export const executionTraces = mysqlTable(
   table => [index("traces_tenant_execution_idx").on(table.tenantId, table.executionId, table.createdAt)],
 );
 
+export const workflowRunTraces = mysqlTable(
+  "workflowRunTraces",
+  {
+    id: varchar("id", { length: 40 }).primaryKey(),
+    tenantId: varchar("tenantId", { length: 40 }).notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    workflowRunId: varchar("workflowRunId", { length: 40 }).notNull().references(() => workflowRuns.id, { onDelete: "cascade" }),
+    executionId: varchar("executionId", { length: 40 }).references(() => executions.id, { onDelete: "set null" }),
+    nodeId: varchar("nodeId", { length: 80 }),
+    agentId: varchar("agentId", { length: 40 }).references(() => agents.id),
+    level: mysqlEnum("level", ["info", "warning", "error"]).default("info").notNull(),
+    eventType: varchar("eventType", { length: 80 }).notNull(),
+    message: text("message").notNull(),
+    metadata: json("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("workflow_traces_run_idx").on(table.tenantId, table.workflowRunId, table.createdAt)],
+);
+
 export const rateLimitWindows = mysqlTable(
   "rateLimitWindows",
   {
@@ -153,12 +206,25 @@ export const rateLimitWindows = mysqlTable(
   table => [index("rate_limit_tenant_window_idx").on(table.tenantId, table.windowStartedAt)],
 );
 
+export const alertSettings = mysqlTable("alertSettings", {
+  tenantId: varchar("tenantId", { length: 40 }).primaryKey().references(() => tenants.id, { onDelete: "cascade" }),
+  maxExecutionCostMicros: int("maxExecutionCostMicros").default(75_000).notNull(),
+  maxLatencyMs: int("maxLatencyMs").default(8_000).notNull(),
+  maxFailures: int("maxFailures").default(1).notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Tenant = typeof tenants.$inferSelect;
 export type TenantMembership = typeof tenantMemberships.$inferSelect;
+export type TenantInvitation = typeof tenantInvitations.$inferSelect;
 export type Agent = typeof agents.$inferSelect;
 export type Workflow = typeof workflows.$inferSelect;
+export type WorkflowRun = typeof workflowRuns.$inferSelect;
+export type WorkflowRunTrace = typeof workflowRunTraces.$inferSelect;
 export type Execution = typeof executions.$inferSelect;
 export type ModelSelection = typeof modelSelections.$inferSelect;
 export type ExecutionTrace = typeof executionTraces.$inferSelect;
+export type AlertSettings = typeof alertSettings.$inferSelect;
